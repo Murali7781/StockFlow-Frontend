@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useCallback, useEffect, useState } from 'react'
 import api, { getErrorMessage } from '../api'
 import Icon from './Icon'
 import Modal from './Modal'
@@ -37,7 +37,8 @@ function Field({ field, value, onChange }) {
   )
 }
 
-export default function ResourcePage({ config, onNotify }) {
+export default function ResourcePage({ config, onNotify, openCreateRequest = false, onCreateRequestConsumed }) {
+  const fields = config.fields
   const [items, setItems] = useState([])
   const [defaultLowStockThreshold, setDefaultLowStockThreshold] = useState(null)
   const [pagination, setPagination] = useState({ page: 1, pages: 1, total: 0 })
@@ -49,12 +50,12 @@ export default function ResourcePage({ config, onNotify }) {
   const [loading, setLoading] = useState(true)
   const [loadError, setLoadError] = useState('')
   const [saving, setSaving] = useState(false)
-  const [modalItem, setModalItem] = useState(undefined)
-  const [values, setValues] = useState({})
+  const [deleting, setDeleting] = useState(false)
+  const [modalItem, setModalItem] = useState(() => (openCreateRequest ? null : undefined))
+  const [deleteItem, setDeleteItem] = useState(null)
+  const [values, setValues] = useState(() => (openCreateRequest ? initialValues(fields) : {}))
   const [formError, setFormError] = useState('')
   const [refresh, setRefresh] = useState(0)
-
-  const fields = config.fields
 
   useEffect(() => {
     const timer = window.setTimeout(() => {
@@ -97,10 +98,15 @@ export default function ResourcePage({ config, onNotify }) {
     return () => { active = false }
   }, [refresh, onNotify])
 
-  function openForm(item) {
+  const openForm = useCallback((item) => {
     setModalItem(item || null)
     setValues(initialValues(fields, item))
     setFormError('')
+  }, [fields])
+
+  function closeForm() {
+    setModalItem(undefined)
+    if (openCreateRequest) onCreateRequestConsumed()
   }
 
   async function save(event) {
@@ -120,7 +126,7 @@ export default function ResourcePage({ config, onNotify }) {
     try {
       if (modalItem) await api.put(`${config.path}/${modalItem.id}`, payload)
       else await api.post(config.path, payload)
-      setModalItem(undefined)
+      closeForm()
       setRefresh((value) => value + 1)
       onNotify(`${config.singular} ${modalItem ? 'updated' : 'created'} successfully`)
     } catch (error) {
@@ -130,14 +136,22 @@ export default function ResourcePage({ config, onNotify }) {
     }
   }
 
-  async function remove(item) {
-    if (!window.confirm(`Delete “${item.name}”? This action cannot be undone.`)) return
+  function remove(item) {
+    setDeleteItem(item)
+  }
+
+  async function confirmRemove() {
+    if (!deleteItem) return
+    setDeleting(true)
     try {
-      await api.delete(`${config.path}/${item.id}`)
+      await api.delete(`${config.path}/${deleteItem.id}`)
+      setDeleteItem(null)
       setRefresh((value) => value + 1)
       onNotify(`${config.singular} deleted`)
     } catch (error) {
       onNotify(getErrorMessage(error), 'error')
+    } finally {
+      setDeleting(false)
     }
   }
 
@@ -214,15 +228,26 @@ export default function ResourcePage({ config, onNotify }) {
         </div>
       </div>
 
-      {modalItem !== undefined && <Modal title={`${modalItem ? 'Edit' : 'Add'} ${config.singular}`} onClose={() => setModalItem(undefined)}>
+      {modalItem !== undefined && <Modal title={`${modalItem ? 'Edit' : 'Add'} ${config.singular}`} onClose={closeForm}>
         {formError && <div className="alert alert-error" role="alert">{formError}</div>}
         <form className="entity-form" onSubmit={save}>
           {fields.map((field) => <Field key={field.name} field={field} value={values[field.name] ?? ''} onChange={(name, value) => setValues((current) => ({ ...current, [name]: value }))} />)}
           <div className="modal-actions form-full">
-            <button type="button" className="button button-secondary" onClick={() => setModalItem(undefined)}>Cancel</button>
+            <button type="button" className="button button-secondary" onClick={closeForm}>Cancel</button>
             <button type="submit" className="button button-primary" disabled={saving}>{saving ? 'Saving…' : modalItem ? 'Save changes' : `Create ${config.singular}`}</button>
           </div>
         </form>
+      </Modal>}
+      {deleteItem && <Modal title={`Delete ${config.singular.toLowerCase()}?`} onClose={() => setDeleteItem(null)}>
+        <div className="delete-confirmation">
+          <p>Delete <strong>{deleteItem.name}</strong>? This action cannot be undone.</p>
+          <div className="modal-actions">
+            <button type="button" className="button button-secondary" disabled={deleting} onClick={() => setDeleteItem(null)}>Cancel</button>
+            <button type="button" className="button button-danger" disabled={deleting} onClick={confirmRemove}>
+              {deleting ? 'Deleting…' : `Delete ${config.singular}`}
+            </button>
+          </div>
+        </div>
       </Modal>}
     </section>
   )

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useState, useSyncExternalStore } from 'react'
 import api, { getErrorMessage } from './api'
 import AuthScreen from './components/AuthScreen'
 import DashboardPage from './components/DashboardPage'
@@ -12,12 +12,41 @@ const navigation = [
   { label: 'Settings', icon: 'settings' },
 ]
 
+const pageRoutes = {
+  Dashboard: '/dashboard',
+  Products: '/products',
+  Settings: '/settings',
+}
+const pagesByRoute = Object.fromEntries(
+  Object.entries(pageRoutes).map(([page, route]) => [route, page]),
+)
+
+function currentPath() {
+  return window.location.pathname.replace(/\/+$/, '') || '/'
+}
+
+function navigateToPath(path, replace = false) {
+  if (currentPath() !== path) {
+    window.history[replace ? 'replaceState' : 'pushState']({}, '', path)
+    window.dispatchEvent(new Event('stockflow:navigate'))
+  }
+}
+
+function subscribeToPath(callback) {
+  window.addEventListener('popstate', callback)
+  window.addEventListener('stockflow:navigate', callback)
+  return () => {
+    window.removeEventListener('popstate', callback)
+    window.removeEventListener('stockflow:navigate', callback)
+  }
+}
+
 const productConfig = {
   path: '/products',
   title: 'Products',
   singular: 'Product',
   eyebrow: 'PRODUCT CATALOG',
-  description: 'Manage product details, pricing, and stock levels.',
+  description: 'Manage and monitor your inventory in one place.',
   defaultSort: 'name',
   sortable: ['name', 'sku', 'quantityOnHand', 'sellingPrice', 'createdAt'],
   columns: [
@@ -30,11 +59,15 @@ const productConfig = {
     },
     {
       key: 'status',
-      label: 'Low stock',
+      label: 'Stock status',
       render: (item, _unused, defaultThreshold) => {
+        const quantity = Number(item.quantityOnHand)
+        if (quantity === 0) {
+          return <span className="status-pill status-out">Out of stock</span>
+        }
         const threshold = item.lowStockThreshold ?? defaultThreshold
         if (threshold === null || threshold === undefined) return '—'
-        return Number(item.quantityOnHand) <= Number(threshold)
+        return quantity <= Number(threshold)
           ? <span className="status-pill status-low">Low stock</span>
           : <span className="status-pill status-healthy">In stock</span>
       },
@@ -180,8 +213,9 @@ function SettingsPage({ onNotify }) {
 
 export default function App() {
   const [session, setSession] = useState(readSession)
-  const [activePage, setActivePage] = useState('Dashboard')
+  const pathname = useSyncExternalStore(subscribeToPath, currentPath, () => '/')
   const [sidebarOpen, setSidebarOpen] = useState(false)
+  const [openProductCreate, setOpenProductCreate] = useState(false)
   const [toast, setToast] = useState(null)
   const [authNotice, setAuthNotice] = useState(() => {
     const notice = localStorage.getItem('stockflow.authNotice') || ''
@@ -192,6 +226,32 @@ export default function App() {
   const notify = useCallback((message, type = 'success') => {
     setToast({ message, type, id: Date.now() })
   }, [])
+  const activePage = pagesByRoute[pathname] || 'Dashboard'
+
+  const changePath = useCallback((path, replace = false) => {
+    navigateToPath(path, replace)
+  }, [])
+
+  useEffect(() => {
+    function onNavigation() {
+      setSidebarOpen(false)
+    }
+    window.addEventListener('popstate', onNavigation)
+    window.addEventListener('stockflow:navigate', onNavigation)
+    return () => {
+      window.removeEventListener('popstate', onNavigation)
+      window.removeEventListener('stockflow:navigate', onNavigation)
+    }
+  }, [])
+
+  useEffect(() => {
+    const isAuthPath = pathname === '/login' || pathname === '/register'
+    if (session && (!pagesByRoute[pathname] || isAuthPath)) {
+      changePath('/dashboard', true)
+    } else if (!session && !isAuthPath) {
+      changePath('/login', true)
+    }
+  }, [changePath, pathname, session])
 
   useEffect(() => {
     if (!toast) return undefined
@@ -207,33 +267,46 @@ export default function App() {
           clearStoredSession()
           setSession(null)
           setAuthNotice('Your session expired. Please sign in again.')
+          changePath('/login', true)
         }
         return Promise.reject(error)
       },
     )
     return () => api.interceptors.response.eject(interceptor)
-  }, [session])
+  }, [changePath, session])
 
   function authenticated(result) {
     localStorage.setItem('stockflow.token', result.token)
     localStorage.setItem('stockflow.user', JSON.stringify(result.user))
     setSession({ token: result.token, user: result.user })
     setAuthNotice('')
-    setActivePage('Dashboard')
+    changePath('/dashboard', true)
   }
 
   function signOut() {
     clearStoredSession()
     setSession(null)
-    setActivePage('Dashboard')
+    changePath('/login', true)
   }
 
   function navigate(page) {
-    setActivePage(page)
+    const path = pageRoutes[page]
+    if (!path) return
+    changePath(path)
     setSidebarOpen(false)
   }
 
-  if (!session) return <AuthScreen onAuthenticated={authenticated} notice={authNotice} />
+  function addProductFromDashboard() {
+    navigate('Products')
+    setOpenProductCreate(true)
+  }
+
+  if (!session) return <AuthScreen
+    onAuthenticated={authenticated}
+    notice={authNotice}
+    registering={pathname === '/register'}
+    onModeChange={(registering) => changePath(registering ? '/register' : '/login')}
+  />
 
   return (
     <div className="app-shell">
@@ -290,10 +363,16 @@ export default function App() {
           </div>
         </header>
         <main className="page-content">
-          {activePage === 'Dashboard' && <DashboardPage onNavigate={navigate} user={session.user} />}
+          {activePage === 'Dashboard' && <DashboardPage
+            onNavigate={navigate}
+            onAddProduct={addProductFromDashboard}
+            user={session.user}
+          />}
           {activePage === 'Products' && <ResourcePage
             config={productConfig}
             onNotify={notify}
+            openCreateRequest={openProductCreate}
+            onCreateRequestConsumed={() => setOpenProductCreate(false)}
           />}
           {activePage === 'Settings' && <SettingsPage onNotify={notify} />}
         </main>
