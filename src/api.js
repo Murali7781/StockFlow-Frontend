@@ -1,7 +1,16 @@
 import axios from 'axios'
 
+const configuredApiUrl = import.meta.env.VITE_API_URL?.replace(/\/+$/, '')
+const apiBaseUrl = configuredApiUrl
+  ? /\/api$/i.test(configuredApiUrl)
+    ? configuredApiUrl
+    : `${configuredApiUrl}/api`
+  : import.meta.env.DEV
+    ? '/api'
+    : 'https://stockflow-backend-kspj.onrender.com/api'
+
 const api = axios.create({
-  baseURL: import.meta.env.VITE_API_URL || '/api',
+  baseURL: apiBaseUrl,
   headers: { 'Content-Type': 'application/json' },
 })
 

@@ -13,8 +13,11 @@ out-of-scope modules are not included.
 3. Run `npm run dev` and open the Vite URL.
 4. Register a workspace or sign in.
 
-Vite proxies `/api` requests to `http://localhost:3000`. Set `VITE_API_URL` to
-an absolute API base URL when deploying without a same-origin `/api` proxy.
+Vite proxies `/api` requests to `http://localhost:3000`. In production, the
+frontend defaults to `https://stockflow-backend-kspj.onrender.com/api`.
+`VITE_API_URL` can override that value; `/api` is appended automatically when
+it is omitted. The backend mounts authentication at `/api/auth/login` and
+`/api/auth/register`.
 The browser routes are `/login`, `/register`, `/dashboard`, `/products`, and
 `/settings`; navigation supports browser Back/Forward and direct route refresh.
 `vercel.json` rewrites frontend routes to the SPA entry point for Vercel
