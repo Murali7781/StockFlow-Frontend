@@ -1,4 +1,5 @@
-import { useCallback, useEffect, useState, useSyncExternalStore } from 'react'
+import { useCallback, useEffect, useState } from 'react'
+import { Navigate, Route, Routes, useLocation, useNavigate } from 'react-router-dom'
 import api, { getErrorMessage } from './api'
 import AuthScreen from './components/AuthScreen'
 import DashboardPage from './components/DashboardPage'
@@ -20,26 +21,6 @@ const pageRoutes = {
 const pagesByRoute = Object.fromEntries(
   Object.entries(pageRoutes).map(([page, route]) => [route, page]),
 )
-
-function currentPath() {
-  return window.location.pathname.replace(/\/+$/, '') || '/'
-}
-
-function navigateToPath(path, replace = false) {
-  if (currentPath() !== path) {
-    window.history[replace ? 'replaceState' : 'pushState']({}, '', path)
-    window.dispatchEvent(new Event('stockflow:navigate'))
-  }
-}
-
-function subscribeToPath(callback) {
-  window.addEventListener('popstate', callback)
-  window.addEventListener('stockflow:navigate', callback)
-  return () => {
-    window.removeEventListener('popstate', callback)
-    window.removeEventListener('stockflow:navigate', callback)
-  }
-}
 
 const productConfig = {
   path: '/products',
@@ -213,7 +194,9 @@ function SettingsPage({ onNotify }) {
 
 export default function App() {
   const [session, setSession] = useState(readSession)
-  const pathname = useSyncExternalStore(subscribeToPath, currentPath, () => '/')
+  const { pathname: rawPathname } = useLocation()
+  const pathname = rawPathname.replace(/\/+$/, '') || '/'
+  const routerNavigate = useNavigate()
   const [sidebarOpen, setSidebarOpen] = useState(false)
   const [openProductCreate, setOpenProductCreate] = useState(false)
   const [toast, setToast] = useState(null)
@@ -229,29 +212,8 @@ export default function App() {
   const activePage = pagesByRoute[pathname] || 'Dashboard'
 
   const changePath = useCallback((path, replace = false) => {
-    navigateToPath(path, replace)
-  }, [])
-
-  useEffect(() => {
-    function onNavigation() {
-      setSidebarOpen(false)
-    }
-    window.addEventListener('popstate', onNavigation)
-    window.addEventListener('stockflow:navigate', onNavigation)
-    return () => {
-      window.removeEventListener('popstate', onNavigation)
-      window.removeEventListener('stockflow:navigate', onNavigation)
-    }
-  }, [])
-
-  useEffect(() => {
-    const isAuthPath = pathname === '/login' || pathname === '/register'
-    if (session && (!pagesByRoute[pathname] || isAuthPath)) {
-      changePath('/dashboard', true)
-    } else if (!session && !isAuthPath) {
-      changePath('/login', true)
-    }
-  }, [changePath, pathname, session])
+    routerNavigate(path, { replace })
+  }, [routerNavigate])
 
   useEffect(() => {
     if (!toast) return undefined
@@ -301,12 +263,24 @@ export default function App() {
     setOpenProductCreate(true)
   }
 
-  if (!session) return <AuthScreen
-    onAuthenticated={authenticated}
-    notice={authNotice}
-    registering={pathname === '/register'}
-    onModeChange={(registering) => changePath(registering ? '/register' : '/login')}
-  />
+  if (!session) {
+    const authScreen = (registering) => (
+      <AuthScreen
+        onAuthenticated={authenticated}
+        notice={authNotice}
+        registering={registering}
+        onModeChange={(nextRegistering) => changePath(nextRegistering ? '/register' : '/login')}
+      />
+    )
+    return (
+      <Routes>
+        <Route path="/login" element={authScreen(false)} />
+        <Route path="/register" element={authScreen(true)} />
+        <Route path="*" element={<Navigate to="/login" replace />} />
+      </Routes>
+    )
+  }
+  if (!pagesByRoute[pathname]) return <Navigate to="/dashboard" replace />
 
   return (
     <div className="app-shell">
@@ -363,18 +337,27 @@ export default function App() {
           </div>
         </header>
         <main className="page-content">
-          {activePage === 'Dashboard' && <DashboardPage
-            onNavigate={navigate}
-            onAddProduct={addProductFromDashboard}
-            user={session.user}
-          />}
-          {activePage === 'Products' && <ResourcePage
-            config={productConfig}
-            onNotify={notify}
-            openCreateRequest={openProductCreate}
-            onCreateRequestConsumed={() => setOpenProductCreate(false)}
-          />}
-          {activePage === 'Settings' && <SettingsPage onNotify={notify} />}
+          <Routes>
+            <Route
+              path="/dashboard"
+              element={<DashboardPage
+                onNavigate={navigate}
+                onAddProduct={addProductFromDashboard}
+                user={session.user}
+              />}
+            />
+            <Route
+              path="/products"
+              element={<ResourcePage
+                config={productConfig}
+                onNotify={notify}
+                openCreateRequest={openProductCreate}
+                onCreateRequestConsumed={() => setOpenProductCreate(false)}
+              />}
+            />
+            <Route path="/settings" element={<SettingsPage onNotify={notify} />} />
+            <Route path="*" element={<Navigate to="/dashboard" replace />} />
+          </Routes>
         </main>
       </div>
       {toast && <div key={toast.id} className={`toast toast-${toast.type}`} role={toast.type === 'error' ? 'alert' : 'status'}>
